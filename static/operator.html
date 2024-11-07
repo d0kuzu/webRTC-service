@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Оператор</title>
+</head>
+<body>
+<button id="connectButton">Подключиться</button>
+
+<script>
+    const connectButton = document.getElementById('connectButton');
+
+    connectButton.addEventListener('click', async () => {
+        const pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        });
+
+        pc.ontrack = event => {
+            const remoteStream = new MediaStream();
+            remoteStream.addTrack(event.track);
+            const audio = new Audio();
+            audio.srcObject = remoteStream;
+            audio.play();
+            console.log("Received remote track and started playing.");
+        };
+
+        const ws = new WebSocket('ws://' + window.location.host + '/ring/signal?user=operator');
+
+        ws.onopen = () => {
+            console.log("WebSocket connection established for operator.");
+        };
+
+        ws.onmessage = async event => {
+            const msg = JSON.parse(event.data);
+            console.log("Received message from server:", msg);
+
+            if (msg.type === 'offer') {
+                console.log("Received offer from server");
+
+                await pc.setRemoteDescription(new RTCSessionDescription({
+                    type: 'offer',
+                    sdp: msg.sdp
+                }));
+
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+
+                ws.send(JSON.stringify({
+                    type: 'answer',
+                    sdp: answer.sdp
+                }));
+                console.log("Sent answer to server");
+            } else if (msg.type === 'candidate') {
+                const candidate = new RTCIceCandidate(msg.candidate);
+                try {
+                    await pc.addIceCandidate(candidate);
+                    console.log("Added ICE candidate:", candidate);
+                } catch (error) {
+                    console.error("Error adding ICE candidate:", error);
+                }
+            }
+        };
+
+        ws.onerror = error => {
+            console.error("WebSocket error on operator side:", error);
+        };
+    });
+</script>
+</body>
+</html>

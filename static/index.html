@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Клиент</title>
+</head>
+<body>
+<button id="callButton">Позвонить оператору</button>
+
+<script>
+    const callButton = document.getElementById('callButton');
+
+    callButton.addEventListener('click', async () => {
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            console.log("Доступ к микрофону получен");
+        } catch (err) {
+            console.error("Ошибка при получении доступа к микрофону:", err);
+            alert("Доступ к микрофону отклонен. Разрешите доступ и попробуйте снова.");
+            return;
+        }
+
+        const pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        });
+
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        pc.onicecandidate = event => {
+            if (event.candidate) {
+                ws.send(JSON.stringify({
+                    type: 'candidate',
+                    candidate: event.candidate.toJSON()
+                }));
+                console.log("Sent ICE candidate to server:", event.candidate);
+            }
+        };
+
+        const ws = new WebSocket('ws://' + window.location.host + '/ring/signal?user=client');
+
+        ws.onopen = async () => {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            ws.send(JSON.stringify({
+                type: 'offer',
+                sdp: offer.sdp
+            }));
+            console.log("Sent offer to server");
+        };
+
+        ws.onmessage = async event => {
+            const msg = JSON.parse(event.data);
+            console.log("Received message from server:", msg);
+
+            if (msg.type === 'answer') {
+                await pc.setRemoteDescription(new RTCSessionDescription({
+                    type: 'answer',
+                    sdp: msg.sdp
+                }));
+                console.log("Received answer and set as remote description");
+            } else if (msg.type === 'candidate') {
+                const candidate = new RTCIceCandidate(msg.candidate);
+                await pc.addIceCandidate(candidate);
+                console.log("Added ICE candidate from server:", candidate);
+            }
+        };
+
+        ws.onerror = error => {
+            console.error("WebSocket error on client side:", error);
+        };
+
+        ws.onclose = () => {
+            console.log("WebSocket connection closed on client side");
+        };
+    });
+</script>
+</body>
+</html>
